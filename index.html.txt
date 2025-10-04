@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>お風呂の時間割</title>
+    <!-- Tailwind CSSの読み込み -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* フォント設定とカスタムCSS */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        .button {
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div class="container bg-white p-6 rounded-2xl shadow-xl w-full">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">お風呂の時間割</h1>
+
+        <!-- Loading Indicator -->
+        <div id="loading" class="text-center text-gray-500 mb-4" style="display:none;">
+            <p>読み込み中...</p>
+        </div>
+
+        <!-- User Profile Section (ログイン後に表示) -->
+        <div id="user-profile" class="flex flex-col items-center mb-6" style="display:none;">
+            <!-- ユーザーのアバターと名前が表示されます -->
+            <img id="user-avatar" class="w-20 h-20 rounded-full mb-2 border-4 border-lime-500" src="" alt="User Avatar">
+            <p id="user-name" class="text-xl font-semibold text-gray-700"></p>
+        </div>
+        
+        <!-- Schedule Display Section (時間割の表示) -->
+        <div id="schedule-display" class="mb-6">
+            <h2 class="text-xl font-bold text-gray-700 mb-4 text-center">今日の時間割</h2>
+            <div id="schedule-table" class="bg-gray-50 rounded-lg p-4">
+                <p class="text-center text-gray-500">時間割を読み込んでいます...</p>
+            </div>
+        </div>
+
+        <!-- Input Form Section (予約フォーム) -->
+        <div id="input-form-section" class="bg-gray-50 p-6 rounded-2xl">
+            <h2 class="text-xl font-bold text-gray-700 mb-4 text-center">自分の時間を予約</h2>
+            <div id="form-content">
+                <div class="mb-4">
+                    <label for="bath-time" class="block text-gray-700 font-medium mb-2">お風呂に入りたい時間:</label>
+                    <select id="bath-time" class="w-full p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-lime-500">
+                        <!-- オプションはJavaScriptで生成されます -->
+                    </select>
+                </div>
+                <button id="reserve-button" class="w-full bg-lime-500 text-white font-bold py-3 px-4 rounded-full button">
+                    この時間を予約する
+                </button>
+            </div>
+        </div>
+
+        <!-- Message Box (アラートの代わりに使うカスタムモーダル) -->
+        <div id="message-box" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white p-6 rounded-xl shadow-2xl z-50 transition-transform duration-300 scale-0" style="min-width: 250px;">
+            <p id="message-text" class="text-center text-lg mb-4"></p>
+            <button id="message-ok-button" class="w-full bg-lime-500 text-white font-bold py-2 rounded-full">OK</button>
+        </div>
+        <div id="overlay" class="fixed inset-0 bg-black opacity-50 z-40 hidden"></div>
+        
+    </div>
+
+    <!-- LINE LIFF SDKを、アプリのJavaScriptコードの直前に配置 -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/2.21.4/sdk.js"></script>
+
+    <script>
+        // エラーや通知を表示するためのカスタムメッセージボックス関数 (alert()の代わり)
+        function showMessage(text) {
+            const messageBox = document.getElementById('message-box');
+            const overlay = document.getElementById('overlay');
+            const messageText = document.getElementById('message-text');
+            
+            messageText.textContent = text;
+            messageBox.classList.remove('scale-0');
+            messageBox.classList.add('scale-100');
+            overlay.style.display = 'block';
+
+            document.getElementById('message-ok-button').onclick = () => {
+                messageBox.classList.remove('scale-100');
+                messageBox.classList.add('scale-0');
+                overlay.style.display = 'none';
+            };
+        }
+        
+        // --- 設定項目: ここを必ず書き換えてください ---
+        // 1. Google Apps Scriptをウェブアプリとしてデプロイした時に取得したURLを貼り付けます
+        const endpointUrl = 'https://script.google.com/macros/s/AKfycbyvSEuwemtdqGDP9X2LRXhscfoV_2f4uZK4Llk0p7NLmlqKIp6QW2-TqFc8UF-Wb4oZjA/exec'; 
+        // 2. LINE Developersで取得したLIFF IDを貼り付けます
+        const liffId = '2008223652-zL5rNqVl'; 
+        // ---------------------------------------------
+        
+        const loadingElement = document.getElementById('loading');
+        const userProfile = document.getElementById('user-profile');
+        const userAvatar = document.getElementById('user-avatar');
+        const userName = document.getElementById('user-name');
+        const scheduleTable = document.getElementById('schedule-table');
+        const bathTimeSelect = document.getElementById('bath-time');
+        const reserveButton = document.getElementById('reserve-button');
+
+        // 18:00から23:00までの時間オプションを生成
+        for (let h = 18; h <= 23; h++) {
+            const option = document.createElement('option');
+            const displayHour = h.toString().padStart(2, '0');
+            option.value = h; // GAS側で時間を識別するための値
+            option.textContent = `${displayHour}:00 - ${displayHour}:59`;
+            bathTimeSelect.appendChild(option);
+        }
+
+        // LIFFの初期化と認証
+        async function initializeLiff() {
+            loadingElement.style.display = 'block';
+            try {
+                // LIFF IDを使って初期化
+                await liff.init({ liffId: liffId }); 
+                
+                if (liff.isLoggedIn()) {
+                    await getUserProfile();
+                    await fetchSchedule();
+                    document.getElementById('input-form-section').style.display = 'block';
+                } else {
+                    // 未ログインならLINEログイン画面へリダイレクト
+                    liff.login();
+                }
+            } catch (err) {
+                console.error('LIFF initialization failed', err);
+                showMessage('LIFFの初期化に失敗しました。LINEアプリから再度お試しください。');
+            } finally {
+                loadingElement.style.display = 'none';
+            }
+        }
+
+        // ユーザープロフィール（名前とアバター）を取得
+        async function getUserProfile() {
+            try {
+                const profile = await liff.getProfile();
+                userAvatar.src = profile.pictureUrl;
+                userName.textContent = profile.displayName;
+                userProfile.style.display = 'flex';
+            } catch (err) {
+                console.error('Failed to get user profile', err);
+                showMessage('ユーザープロフィールの取得に失敗しました。');
+            }
+        }
+        
+        // GASから最新の時間割を取得
+        async function fetchSchedule() {
+            try {
+                const response = await fetch(`${endpointUrl}?action=getSchedule`);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                renderSchedule(data);
+            } catch (err) {
+                console.error('Failed to fetch schedule:', err);
+                showMessage('時間割の取得に失敗しました。');
+                scheduleTable.innerHTML = '<p class="text-center text-gray-500">時間割の読み込みに失敗しました。</p>';
+            }
+        }
+        
+        // 取得した時間割データを画面に表示
+        function renderSchedule(data) {
+            scheduleTable.innerHTML = '';
+            
+            const timeSlots = Array.from({ length: 6 }, (_, i) => 18 + i);
+            let tableHTML = '<div class="grid grid-cols-2 sm:grid-cols-3 gap-2">';
+            
+            // タイムスロットごとに表示を生成
+            timeSlots.forEach(hour => {
+                const displayHour = hour.toString().padStart(2, '0');
+                // データが存在しない、またはGASから'未定'が返ってきた場合
+                const user = data[hour] && data[hour] !== '未定' ? data[hour] : '未定'; 
+                
+                // 予約済みの時間は背景色を変える
+                const bgColor = user !== '未定' ? 'bg-lime-200' : 'bg-gray-200';
+
+                tableHTML += `
+                    <div class="p-3 ${bgColor} rounded-lg flex flex-col items-center text-center">
+                        <span class="text-xs font-medium text-gray-500">${displayHour}:00 - ${displayHour}:59</span>
+                        <span class="text-lg font-bold text-gray-700 mt-1">${user}</span>
+                    </div>
+                `;
+            });
+            tableHTML += '</div>';
+            scheduleTable.innerHTML = tableHTML;
+        }
+
+        // 予約ボタンがクリックされた時の処理
+        reserveButton.addEventListener('click', async () => {
+            // liffオブジェクトが確実に存在するかをチェック
+            if (typeof liff === 'undefined') {
+                console.error('LIFF SDK is not loaded or initialized.');
+                showMessage('LIFFの初期化が必要です。ページを再読み込みするか、LINEアプリから再度開いてください。');
+                return; // 処理を中断
+            }
+
+            const selectedTime = bathTimeSelect.value;
+            
+            try {
+                const profile = await liff.getProfile();
+                const displayName = profile.displayName;
+                const userId = profile.userId;
+
+                reserveButton.disabled = true;
+                reserveButton.textContent = '予約中...';
+                
+                // GASに予約リクエストをPOST送信
+                const response = await fetch(endpointUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'reserve',
+                        time: selectedTime,
+                        user: displayName,
+                        userId: userId // LIFF ID認証済みのユーザーID
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Reservation failed');
+                }
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showMessage('お風呂の時間を予約しました！');
+                    await fetchSchedule(); // 成功したら最新の時間割を再取得
+                } else {
+                    showMessage(`予約に失敗しました: ${result.message}`);
+                }
+            } catch (err) {
+                console.error('Reservation failed:', err);
+                showMessage('予約処理中にエラーが発生しました。');
+            } finally {
+                reserveButton.disabled = false;
+                reserveButton.textContent = 'この時間を予約する';
+            }
+        });
+
+        // LIFF SDKの読み込み完了をチェックし、完了後に初期化を開始する
+        function liffCheck() {
+            if (typeof liff !== 'undefined') {
+                // liffオブジェクトが定義されたら初期化
+                initializeLiff();
+            } else {
+                // 50ms待って再度チェック
+                setTimeout(liffCheck, 50);
+            }
+        }
+
+        // アプリ起動時の処理を開始
+        liffCheck(); // LIFFが読み込まれるのを待機する処理を開始
+
+    </script>
+</body>
+</html>
